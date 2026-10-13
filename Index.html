@@ -1,0 +1,257 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Creative Build Lab</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;overflow:hidden;font-family:Arial;color:white;background:#79cfff;touch-action:none}
+canvas{display:block}
+#hud{position:fixed;inset:0;pointer-events:none}
+.panel{background:#101827dd;border:1px solid #ffffff44;border-radius:12px;padding:10px}
+#top{position:absolute;top:10px;left:10px;right:10px;display:flex;justify-content:space-between;gap:8px;align-items:start}
+button{background:#243751;color:white;border:1px solid #8da9c9;border-radius:10px;padding:12px;font-size:14px;font-weight:bold;touch-action:manipulation}
+button:active{background:#11a9ff}
+#pieces{position:absolute;bottom:18px;left:50%;transform:translateX(-50%);display:flex;gap:5px;pointer-events:auto}
+#pieces button{padding:12px 10px}
+#controls{position:absolute;bottom:82px;left:12px;right:12px;display:flex;justify-content:space-between;align-items:end}
+.pad{display:grid;grid-template-columns:repeat(3,48px);grid-template-rows:repeat(2,48px);gap:4px;pointer-events:auto}
+.pad button{padding:4px;font-size:20px;background:#12233cdd}
+.actions{display:grid;grid-template-columns:repeat(2,64px);gap:7px;pointer-events:auto}
+.actions button{height:53px;padding:5px;background:#123a58e8}
+#hint{position:absolute;top:75px;left:50%;transform:translateX(-50%);text-align:center;width:90%;font-size:13px;text-shadow:1px 2px 3px #000}
+#edit{position:absolute;top:74px;right:10px;pointer-events:auto}
+#cross{position:absolute;left:50%;top:50%;font-size:24px;transform:translate(-50%,-50%);color:white;text-shadow:0 1px 4px black}
+@media(min-width:800px){#controls{bottom:25px}.pad button{width:55px;height:55px}.actions button{width:75px}}
+</style>
+</head>
+<body>
+<div id="hud">
+ <div id="top">
+  <div class="panel"><b>⚡ CREATIVE BUILD LAB</b><br><small id="mode">BUILD MODE</small></div>
+  <div class="panel">🧱 <span id="count">0</span><br>⭐ <span id="score">0</span></div>
+ </div>
+ <div id="hint">Choose a piece, then tap BUILD. Drag the screen to look around.</div>
+ <button id="edit" onclick="editMode()">✏️ EDIT</button>
+ <div id="cross">+</div>
+ <div id="controls">
+  <div class="pad">
+   <button style="grid-column:2" ontouchstart="move('forward',1)" ontouchend="move('forward',0)" onmousedown="move('forward',1)" onmouseup="move('forward',0)">⬆️</button>
+   <button ontouchstart="move('left',1)" ontouchend="move('left',0)" onmousedown="move('left',1)" onmouseup="move('left',0)">⬅️</button>
+   <button ontouchstart="move('back',1)" ontouchend="move('back',0)" onmousedown="move('back',1)" onmouseup="move('back',0)">⬇️</button>
+   <button ontouchstart="move('right',1)" ontouchend="move('right',0)" onmousedown="move('right',1)" onmouseup="move('right',0)">➡️</button>
+  </div>
+  <div class="actions">
+   <button onclick="jump()">🦘 JUMP</button>
+   <button onclick="build()">🧱 BUILD</button>
+   <button onclick="rotate()">🔄 ROTATE</button>
+   <button onclick="removeBuild()">🗑️ REMOVE</button>
+  </div>
+ </div>
+ <div id="pieces">
+  <button onclick="selectPiece('wall')">🧱 WALL</button>
+  <button onclick="selectPiece('floor')">⬜ FLOOR</button>
+  <button onclick="selectPiece('ramp')">📐 RAMP</button>
+  <button onclick="selectPiece('roof')">🔺 ROOF</button>
+ </div>
+</div>
+<script type="module">
+import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x86d4ff);
+scene.fog=new THREE.Fog(0x86d4ff,35,100);
+const camera=new THREE.PerspectiveCamera(70,innerWidth/innerHeight,.1,300);
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth,innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.shadowMap.enabled=true;
+renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+document.body.prepend(renderer.domElement);
+renderer.domElement.style.position='fixed';
+renderer.domElement.style.inset='0';
+renderer.domElement.style.zIndex='0';
+document.getElementById('hud').style.zIndex='1';
+
+scene.add(new THREE.HemisphereLight(0xffffff,0x668455,2));
+const sun=new THREE.DirectionalLight(0xffffff,2.5);
+sun.position.set(-15,30,10);sun.castShadow=true;scene.add(sun);
+
+const mat=(color)=>new THREE.MeshStandardMaterial({color,roughness:.85});
+const grass=mat(0x48ad54),dirt=mat(0x9b774c);
+const ground=new THREE.Mesh(new THREE.PlaneGeometry(180,180),grass);
+ground.rotation.x=-Math.PI/2;ground.receiveShadow=true;scene.add(ground);
+
+const grid=new THREE.GridHelper(180,90,0xffffff,0xffffff);
+grid.position.y=.025;grid.material.transparent=true;grid.material.opacity=.13;scene.add(grid);
+
+function box(x,y,z,sx,sy,sz,color){
+ const m=new THREE.Mesh(new THREE.BoxGeometry(sx,sy,sz),mat(color));
+ m.position.set(x,y,z);m.castShadow=true;m.receiveShadow=true;scene.add(m);return m;
+}
+// Trees and rocks decorate the island.
+for(let i=0;i<65;i++){
+ const x=(Math.random()-.5)*100,z=(Math.random()-.5)*100;
+ if(Math.abs(x)<8&&Math.abs(z)<8)continue;
+ if(Math.random()<.72){
+  box(x,1,z,.65,2,.65,0x79502e);
+  const crown=new THREE.Mesh(new THREE.ConeGeometry(1.8,3.5,7),mat(0x218747));
+  crown.position.set(x,3.3,z);crown.castShadow=true;scene.add(crown);
+ }else{
+  const rock=new THREE.Mesh(new THREE.DodecahedronGeometry(1),mat(0x87929b));
+  rock.position.set(x,.5,z);rock.scale.set(1,.65,.8);scene.add(rock);
+ }
+}
+// Bright practice targets
+const targets=[];
+for(let i=0;i<8;i++){
+ const x=(i%4-1.5)*5,z=-16-Math.floor(i/4)*7;
+ const target=box(x,1.5,z,1.2,1.8,.5,0xffbb28);
+ target.userData.target=true;targets.push(target);
+}
+const player=new THREE.Group();scene.add(player);
+const body=new THREE.Mesh(new THREE.CapsuleGeometry(.38,.75,4,8),mat(0x168bff));
+body.position.y=1;body.castShadow=true;player.add(body);
+const head=new THREE.Mesh(new THREE.SphereGeometry(.28,12,10),mat(0xffcf9c));
+head.position.y=1.7;player.add(head);
+player.position.set(0,0,5);
+
+let yaw=0,pitch=-.15,vy=0,onGround=true;
+let selected='wall',rotation=0,editing=false,builds=[],score=0;
+let held={};
+window.move=(dir,on)=>{held[dir]=!!on};
+window.selectPiece=(p)=>{selected=p;document.getElementById('hint').textContent='Selected: '+p.toUpperCase()};
+window.rotate=()=>{rotation+=Math.PI/2};
+window.editMode=()=>{
+ editing=!editing;
+ document.getElementById('mode').textContent=editing?'EDIT MODE':'BUILD MODE';
+ document.getElementById('edit').textContent=editing?'✏️ EDIT ON':'✏️ EDIT';
+};
+window.jump=()=>{if(onGround){vy=8;onGround=false}};
+function nearestBuild(){
+ if(!builds.length)return -1;
+ let best=-1,dist=Infinity;
+ builds.forEach((b,i)=>{
+  const d=b.position.distanceTo(player.position);
+  if(d<dist){dist=d;best=i}
+ });
+ return dist<8?best:-1;
+}
+window.removeBuild=()=>{
+ const i=nearestBuild();
+ if(i>=0){scene.remove(builds[i]);builds.splice(i,1);updateCount()}
+};
+function updateCount(){document.getElementById('count').textContent=builds.length}
+window.build=()=>{
+ if(editing){const i=nearestBuild();if(i>=0){
+  const b=builds[i];b.material=mat(Math.random()*0xffffff);
+ }return}
+ const direction=new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
+ const pos=player.position.clone().addScaledVector(direction,4);
+ pos.x=Math.round(pos.x/2)*2;pos.z=Math.round(pos.z/2)*2;
+ let mesh;
+ if(selected==='wall'){
+  mesh=new THREE.Mesh(new THREE.BoxGeometry(3,.15,3),mat(0x46b9f5));
+  mesh.position.set(pos.x,1.5,pos.z);
+ }else if(selected==='floor'){
+  mesh=new THREE.Mesh(new THREE.BoxGeometry(3,.2,3),mat(0x8bd5f7));
+  mesh.position.set(pos.x,.25,pos.z);
+ }else if(selected==='ramp'){
+  mesh=new THREE.Mesh(new THREE.BoxGeometry(3,.25,3),mat(0xefa94b));
+  mesh.rotation.x=-.45;mesh.position.set(pos.x,1,pos.z);
+ }else{
+  mesh=new THREE.Mesh(new THREE.ConeGeometry(2.1,1.5,4),mat(0x8c75e8));
+  mesh.rotation.y=Math.PI/4;mesh.position.set(pos.x,2,pos.z);
+ }
+ mesh.rotation.y=rotation;mesh.castShadow=true;mesh.receiveShadow=true;
+ scene.add(mesh);builds.push(mesh);updateCount();
+};
+function shoot(){
+ const ray=new THREE.Raycaster();
+ ray.setFromCamera(new THREE.Vector2(0,0),camera);
+ const hit=ray.intersectObjects(targets);
+ if(hit.length){
+  scene.remove(hit[0].object);
+  targets.splice(targets.indexOf(hit[0].object),1);
+  score+=10;document.getElementById('score').textContent=score;
+  if(!targets.length)document.getElementById('hint').textContent='All targets hit! Great job!';
+ }
+}
+let lastX=0,lastY=0,dragging=false;
+renderer.domElement.addEventListener('pointerdown',e=>{
+ if(e.pointerType==='mouse'){dragging=true;lastX=e.clientX;lastY=e.clientY}
+});
+renderer.domElement.addEventListener('pointermove',e=>{
+ if(e.pointerType==='mouse'&&dragging){
+  yaw-=(e.clientX-lastX)*.005;
+  pitch=Math.max(-.8,Math.min(.5,pitch+(e.clientY-lastY)*.003));
+  lastX=e.clientX;lastY=e.clientY;
+ }
+});
+window.addEventListener('pointerup',()=>dragging=false);
+let touchX=0,touchY=0;
+renderer.domElement.addEventListener('touchstart',e=>{
+ const t=e.changedTouches[0];touchX=t.clientX;touchY=t.clientY;
+},{passive:true});
+renderer.domElement.addEventListener('touchmove',e=>{
+ const t=e.changedTouches[0];
+ if(t.clientX>innerWidth*.28&&t.clientY<innerHeight-170){
+  yaw-=(t.clientX-touchX)*.009;
+  pitch=Math.max(-.8,Math.min(.5,pitch+(t.clientY-touchY)*.005));
+ }
+ touchX=t.clientX;touchY=t.clientY;
+},{passive:true});
+window.addEventListener('keydown',e=>{
+ if(['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault();
+ if(e.code==='KeyW'||e.code==='ArrowUp')held.forward=true;
+ if(e.code==='KeyS'||e.code==='ArrowDown')held.back=true;
+ if(e.code==='KeyA'||e.code==='ArrowLeft')held.left=true;
+ if(e.code==='KeyD'||e.code==='ArrowRight')held.right=true;
+ if(e.code==='Space')jump();
+ if(e.code==='KeyQ')rotate();
+ if(e.code==='KeyG')editMode();
+ if(e.code==='Digit1')selectPiece('wall');
+ if(e.code==='Digit2')selectPiece('floor');
+ if(e.code==='Digit3')selectPiece('ramp');
+ if(e.code==='Digit4')selectPiece('roof');
+ if(e.code==='KeyE')build();
+});
+window.addEventListener('keyup',e=>{
+ if(e.code==='KeyW'||e.code==='ArrowUp')held.forward=false;
+ if(e.code==='KeyS'||e.code==='ArrowDown')held.back=false;
+ if(e.code==='KeyA'||e.code==='ArrowLeft')held.left=false;
+ if(e.code==='KeyD'||e.code==='ArrowRight')held.right=false;
+});
+renderer.domElement.addEventListener('dblclick',shoot);
+let previous=performance.now();
+function animate(now){
+ requestAnimationFrame(animate);
+ const dt=Math.min((now-previous)/1000,.04);previous=now;
+ const speed=held.sprint?10:6;
+ const forward=new THREE.Vector3(-Math.sin(yaw),0,-Math.cos(yaw));
+ const right=new THREE.Vector3(Math.cos(yaw),0,-Math.sin(yaw));
+ if(held.forward)player.position.addScaledVector(forward,speed*dt);
+ if(held.back)player.position.addScaledVector(forward,-speed*dt);
+ if(held.left)player.position.addScaledVector(right,-speed*dt);
+ if(held.right)player.position.addScaledVector(right,speed*dt);
+ player.position.x=THREE.MathUtils.clamp(player.position.x,-80,80);
+ player.position.z=THREE.MathUtils.clamp(player.position.z,-80,80);
+ vy-=20*dt;player.position.y+=vy*dt;
+ if(player.position.y<=0){player.position.y=0;vy=0;onGround=true}
+ const look=new THREE.Vector3(-Math.sin(yaw)*Math.cos(pitch),Math.sin(pitch),-Math.cos(yaw)*Math.cos(pitch));
+ camera.position.set(player.position.x,player.position.y+2.8,player.position.z);
+ camera.position.addScaledVector(look,-7);
+ camera.lookAt(player.position.x+look.x*5,player.position.y+1.3+look.y*5,player.position.z+look.z*5);
+ player.rotation.y=yaw;
+ renderer.render(scene,camera);
+}
+window.addEventListener('resize',()=>{
+ camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();
+ renderer.setSize(innerWidth,innerHeight);
+});
+animate(performance.now());
+</script>
+</body>
+</html>
